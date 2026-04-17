@@ -1,7 +1,5 @@
 ---
 title: "Students Who Feel Supported Show Higher Persistence in Their Studies"
-author: "Group [X]"
-date: "`r Sys.Date()`"
 output:
   html_document:
     toc: true
@@ -12,7 +10,6 @@ output:
   pdf_document:
     toc: true
     toc_depth: '3'
-subtitle: "IT3011 - Theory and Practices in Statistical Modeling | Group Assignment"
 ---
 
 ```{r setup, include=FALSE}
@@ -26,15 +23,14 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
 
 > **"Students who feel supported show higher persistence in their studies."**
 
-This report investigates whether various forms of support --- parental involvement, access to resources, teacher quality, peer influence, tutoring, and school type --- are associated with higher levels of student persistence. Persistence is defined as sustained academic effort and engagement, measured through study hours, attendance, motivation, exam performance, score improvement, and participation in extracurricular activities.
+This report investigates whether various forms of support -- parental involvement, access to resources, teacher quality, peer influence, tutoring, and school type -- are associated with higher levels of student persistence. Persistence is defined as sustained academic effort and engagement, measured through study hours, attendance, motivation, exam performance, score improvement, and participation in extracurricular activities.
 
 ## Dataset Description
 
-We use the **Student Performance Factors** dataset, which contains **6,609 observations** across **20 variables** capturing academic, social, and demographic attributes of students. This is **secondary data** sourced from Kaggle:
+We use the **Student Performance Factors** dataset, which contains **6,607 observations** across **20 variables** capturing academic, social, and demographic attributes of students. This is **secondary data** sourced from Kaggle:
 
 - **Source:** [Student Performance Factors – Kaggle](https://www.kaggle.com/datasets/lainguyn123/student-performance-factors)
 - **Author:** Lai Nguyen
-- The dataset was downloaded and placed in the project directory as `Student Performance Factors 1.csv`.
 
 ## Variable Structure
 
@@ -42,21 +38,22 @@ Our variables are organized into three categories based on their role in the ana
 
 | Role | Variables |
 |:-----|:---------|
-| **Independent (Support)** | Parental_Involvement, Access_to_Resources, Tutoring_Sessions, Teacher_Quality, Peer_Influence, School_Type |
-| **Dependent (Persistence)** | Hours_Studied, Attendance, Motivation_Level, Exam_Score, Score_Improvement (derived), Extracurricular_Activities |
+| **Independent (Support)** | Parental_Involvement, Access_to_Resources, Tutoring_Sessions, Teacher_Quality, Peer_Influence |
+| **Dependent (Persistence)** | Hours_Studied, Attendance, Motivation_Level, Score_Improvement (derived) |
 | **Control (Confounders)** | Family_Income, Parental_Education_Level, Gender, Distance_from_Home |
 
 - **Independent variables** measure different dimensions of support that a student receives.
 - **Dependent variables** are combined into a single **Persistence Index** (composite z-score average) for modelling, while analyzed individually in the descriptive phase.
 - **Control variables** are included in regression to isolate the true effect of support, but are not themselves interpreted as "support."
+- Control variables were considered, but the final model focuses on primary support factors to maintain clarity and interpretability
 
 ## Methodology
 
 The analysis follows three phases, each mapped to the module's learning outcomes:
 
-1. **Descriptive Analytics** (LO1, LO4) --- Summarize variables, visualize distributions, and fit probability distributions from the exponential family (Normal, Gamma, Poisson, Binomial).
-2. **Inferential Analytics** (LO2) --- Conduct hypothesis tests (ANOVA, t-tests, proportion tests, variance tests, correlation tests) to determine whether the observed patterns are statistically significant.
-3. **Predictive Analytics** (LO3, LO6) --- Build a Multiple Linear Regression model to quantify the effect of support on persistence, and a Naive Bayes classifier to predict persistence categories.
+1. **Descriptive Analytics** -- Summarize variables, visualize distributions, and fit probability distributions from the exponential family (Normal, Gamma, Poisson, Binomial).
+2. **Inferential Analytics** -- Conduct hypothesis tests (ANOVA, t-tests, proportion tests, variance tests, correlation tests) to determine whether the observed patterns are statistically significant.
+3. **Predictive Analytics** -- Build a Multiple Linear Regression model to quantify the effect of support on persistence, and a Naive Bayes classifier to predict persistence categories.
 
 
 ---
@@ -73,11 +70,9 @@ if (!requireNamespace("caret", quietly = TRUE)) {
   install.packages("caret", dependencies = TRUE, repos = "https://cran.r-project.org")
 }
 
-required_packages <- c("tidyverse", "MASS", "car", "e1071", "corrplot",
-                       "nortest", "caret", "fitdistrplus")
+required_packages <- c("tidyverse", "MASS", "car", "e1071", "corrplot","nortest", "caret", "fitdistrplus")
 new_packages <- required_packages[!(required_packages %in% installed.packages()[, "Package"])]
-if (length(new_packages)) install.packages(new_packages, dependencies = TRUE,
-                                           repos = "https://cran.r-project.org")
+if (length(new_packages)) install.packages(new_packages, dependencies = TRUE, repos = "https://cran.r-project.org")
 
 invisible(lapply(required_packages, library, character.only = TRUE))
 set.seed(42)
@@ -97,54 +92,198 @@ str(data)
 
 ## Missing Values Check
 
-Before proceeding, we verify that the dataset has no missing values, as missing data could bias our statistical tests and models.
+Before proceeding, we check for both standard `NA` values and blank text entries. Some missing values in CSV files are stored as empty strings rather than `NA`, so checking only `is.na()` can undercount missing data.
 
 ```{r missing-values}
-missing_counts <- colSums(is.na(data))
-knitr::kable(data.frame(Variable = names(missing_counts), Missing = missing_counts),
-             row.names = FALSE, caption = "Missing Value Counts")
+missing_summary <- data.frame(
+  Variable = names(data),
+  NA_Count = sapply(data, function(x) sum(is.na(x))),
+  Blank_Count = sapply(data, function(x) {
+    if (is.character(x)) sum(!is.na(x) & trimws(x) == "") else 0
+  }),
+  row.names = NULL
+)
+
+missing_summary$Total_Missing <- missing_summary$NA_Count + missing_summary$Blank_Count
+
+knitr::kable(missing_summary, row.names = FALSE,caption="Missing Value Counts Including Blank Strings")
+
+data <- data %>%mutate(across(where(is.character), ~ na_if(trimws(.x), "")))
+
+rows_before_complete_case <- nrow(data)
+data <- data %>% drop_na()
+rows_after_complete_case <- nrow(data)
+rows_removed_complete_case <- rows_before_complete_case - rows_after_complete_case
 ```
 
-**Conclusion:** `r if(sum(missing_counts) == 0) "The dataset has no missing values. No imputation is required, and all 6,609 observations are usable." else paste("There are", sum(missing_counts), "missing values that need to be addressed before analysis.")`
+**Conclusion:** `r if(sum(missing_summary$Total_Missing) == 0) "The dataset has no missing values. No imputation is required, and all observations are usable." else paste("The dataset contains", sum(missing_summary$Total_Missing), "missing values when blank strings are counted. Blank strings are converted to NA before variable encoding.")`
+
+Since the missing values represent a very small portion of the dataset, we use **complete-case analysis** instead of filling missing values. This means rows with missing values are removed before modelling. This is more suitable here because imputing values such as `Teacher_Quality`, `Parental_Education_Level`, or `Distance_from_Home` would introduce artificial categories or guessed values into the analysis. Complete-case analysis keeps the modelling process transparent and avoids changing the original category distributions.
+
+After applying complete-case analysis, the dataset contains **`r rows_after_complete_case` rows**. A total of **`r rows_removed_complete_case` rows** were removed from the original **`r rows_before_complete_case` rows**. The proportion of removed rows is negligible relative to the dataset size, ensuring minimal impact on analysis
 
 
 ## Variable Encoding
 
-Categorical variables are encoded as **ordered factors** with meaningful level ordering. This ensures that R treats them correctly in visualizations, ANOVA, and regression. Ordinal variables (Low < Medium < High) preserve their natural hierarchy, while nominal variables (School_Type, Gender) are treated as unordered factors.
+| Variable | Type | Nature | Encoding Technique | Reason |
+|:--|:--|:--|:--|:--|
+| Parental_Involvement | Categorical | Ordinal | Label Encoding (1,2,3) | Has order (Low < Medium < High) |
+| Access_to_Resources | Categorical | Ordinal | Label Encoding (1,2,3) | Ordered levels |
+| Motivation_Level | Categorical | Ordinal | Label Encoding (1,2,3) | Ordered |
+| Teacher_Quality | Categorical | Ordinal | Label Encoding (1,2,3) | Ordered |
+| Family_Income | Categorical | Ordinal | Label Encoding (1,2,3) | Ordered |
+| Peer_Influence | Categorical | Ordinal | Label Encoding (1,2,3) | Negative < Neutral < Positive |
+| Distance_from_Home | Categorical | Ordinal | Label Encoding (1,2,3) | Near < Moderate < Far |
+| Parental_Education_Level | Categorical | Ordinal | Label Encoding (1,2,3) | Education hierarchy |
+| Extracurricular_Activities | Categorical | Binary | Binary Encoding (0/1) | Yes/No |
+| Internet_Access | Categorical | Binary | Binary Encoding (0/1) | Yes/No |
+| Learning_Disabilities | Categorical | Binary | Binary Encoding (0/1) | Yes/No |
+| Gender | Categorical | Nominal (Binary) | Binary Encoding (0/1) | No ranking |
+| School_Type | Categorical | Nominal (Binary) | Binary Encoding (0/1) | No ranking |
 
-```{r encoding}
+NONE of the variables actually require full one-hot encoding.
+
+Why?
+
+The dataset has:
+
+- Ordinal variables -> need order -> use 1,2,3
+- Binary variables -> already 2 categories -> use 0/1
+
+One-hot encoding is mainly needed for variables with 3+ categories and no order.
+
+### Data Validation
+
+Before encoding categorical variables, the observed category labels are checked against the expected labels. This is necessary because numeric encoding assumes that each label has a fixed meaning. For example, if `"Medium"` were misspelled, converting directly to a factor could silently create missing values and distort the model inputs.
+
+This validation step protects the analysis from accidental misclassification before any ordinal or binary mapping is applied.
+
+```{r encoding-validation}
 ordinal_levels <- c("Low", "Medium", "High")
-data$Parental_Involvement     <- factor(data$Parental_Involvement, levels = ordinal_levels, ordered = TRUE)
-data$Access_to_Resources      <- factor(data$Access_to_Resources,  levels = ordinal_levels, ordered = TRUE)
-data$Teacher_Quality           <- factor(data$Teacher_Quality,       levels = ordinal_levels, ordered = TRUE)
-data$Motivation_Level          <- factor(data$Motivation_Level,      levels = ordinal_levels, ordered = TRUE)
-data$Family_Income             <- factor(data$Family_Income,         levels = ordinal_levels, ordered = TRUE)
-data$Peer_Influence            <- factor(data$Peer_Influence,
-                                         levels = c("Negative", "Neutral", "Positive"), ordered = TRUE)
-data$Parental_Education_Level  <- factor(data$Parental_Education_Level,
-                                         levels = c("High School", "College", "Postgraduate"), ordered = TRUE)
-data$Distance_from_Home        <- factor(data$Distance_from_Home,
-                                         levels = c("Near", "Moderate", "Far"), ordered = TRUE)
+peer_levels <- c("Negative", "Neutral", "Positive")
+distance_levels <- c("Near", "Moderate", "Far")
+education_levels <- c("High School", "College", "Postgraduate")
 
-data$School_Type                <- factor(data$School_Type)
-data$Gender                     <- factor(data$Gender)
-data$Extracurricular_Activities <- factor(data$Extracurricular_Activities)
-data$Internet_Access            <- factor(data$Internet_Access)
-data$Learning_Disabilities      <- factor(data$Learning_Disabilities)
+validate_levels <- function(variable, allowed_levels) {
+  actual_levels <- unique(data[[variable]][!is.na(data[[variable]])])
+  invalid_levels <- setdiff(actual_levels, allowed_levels)
+
+  if (length(invalid_levels) > 0) {
+    stop(paste(
+      "Unexpected value(s) in", variable, ":",
+      paste(invalid_levels, collapse = ", ")
+    ))
+  }
+}
+
+validate_levels("Parental_Involvement", ordinal_levels)
+validate_levels("Access_to_Resources", ordinal_levels)
+validate_levels("Motivation_Level", ordinal_levels)
+validate_levels("Teacher_Quality", ordinal_levels)
+validate_levels("Family_Income", ordinal_levels)
+validate_levels("Peer_Influence", peer_levels)
+validate_levels("Distance_from_Home", distance_levels)
+validate_levels("Parental_Education_Level", education_levels)
+validate_levels("Extracurricular_Activities", c("No", "Yes"))
+validate_levels("Internet_Access", c("No", "Yes"))
+validate_levels("Learning_Disabilities", c("No", "Yes"))
+validate_levels("Gender", c("Female", "Male"))
+validate_levels("School_Type", c("Public", "Private"))
 ```
 
-Numeric versions of ordinal variables are also created for use in correlation analysis and regression, where numeric inputs are required.
+### Ordinal Encoding
 
-```{r numeric-encoding}
-data$Motivation_Num           <- as.numeric(data$Motivation_Level)
-data$Extracurricular_Num      <- ifelse(data$Extracurricular_Activities == "Yes", 1, 0)
+Ordinal variables have categories with a meaningful ranking, so they are first converted into ordered factors. This tells R the correct order of the categories before converting them into numeric values.
+
+This preserves the statistical meaning of progression from lower to higher levels, such as `Low < Medium < High`. The resulting `1, 2, 3` coding allows correlation and regression models to estimate the effect of a one-level increase while retaining the natural ranking of the variable.
+
+```{r ordinal-encoding}
+data$Parental_Involvement <- factor(data$Parental_Involvement,levels = ordinal_levels, ordered = TRUE)
+data$Access_to_Resources <- factor(data$Access_to_Resources,levels = ordinal_levels, ordered = TRUE)
+data$Motivation_Level <- factor(data$Motivation_Level,levels = ordinal_levels, ordered = TRUE)
+data$Teacher_Quality <- factor(data$Teacher_Quality,levels = ordinal_levels, ordered = TRUE)
+data$Family_Income <- factor(data$Family_Income,levels = ordinal_levels, ordered = TRUE)
+data$Peer_Influence <- factor(data$Peer_Influence,levels = peer_levels, ordered = TRUE)
+data$Distance_from_Home <- factor(data$Distance_from_Home,levels = distance_levels, ordered = TRUE)
+data$Parental_Education_Level <- factor(data$Parental_Education_Level,levels = education_levels, ordered = TRUE)
+
+# Convert to numeric for modelling
 data$Parental_Involvement_Num <- as.numeric(data$Parental_Involvement)
-data$Access_to_Resources_Num  <- as.numeric(data$Access_to_Resources)
-data$Teacher_Quality_Num      <- as.numeric(data$Teacher_Quality)
-data$Peer_Influence_Num       <- as.numeric(data$Peer_Influence)
-data$Family_Income_Num        <- as.numeric(data$Family_Income)
-data$Parental_Education_Num   <- as.numeric(data$Parental_Education_Level)
-data$Distance_Num             <- as.numeric(data$Distance_from_Home)
+data$Access_to_Resources_Num <- as.numeric(data$Access_to_Resources)
+data$Motivation_Level_Num <- as.numeric(data$Motivation_Level)
+data$Teacher_Quality_Num <- as.numeric(data$Teacher_Quality)
+data$Family_Income_Num <- as.numeric(data$Family_Income)
+data$Peer_Influence_Num <- as.numeric(data$Peer_Influence)
+data$Distance_from_Home_Num <- as.numeric(data$Distance_from_Home)
+data$Parental_Education_Level_Num <- as.numeric(data$Parental_Education_Level)
+```
+
+### Binary Encoding
+
+Binary variables contain only two categories, so a single `0/1` numeric column is sufficient for statistical modelling. This avoids unnecessary one-hot encoding.
+
+If both categories of a binary variable were expanded into separate dummy columns while using an intercept in regression, the model could suffer from perfect multicollinearity. This problem is commonly called the dummy variable trap. Using one `0/1` indicator keeps the coding simple and interpretable: the coefficient compares the category coded as `1` against the reference category coded as `0`.
+
+```{r binary-encoding}
+data$Extracurricular_Activities_Num <- ifelse(data$Extracurricular_Activities == "Yes", 1,ifelse(data$Extracurricular_Activities == "No", 0, NA))
+data$Internet_Access_Num <- ifelse(data$Internet_Access == "Yes", 1,ifelse(data$Internet_Access == "No", 0, NA))
+data$Learning_Disabilities_Num <- ifelse(data$Learning_Disabilities == "Yes", 1,ifelse(data$Learning_Disabilities == "No", 0, NA))
+data$Gender_Num <- ifelse(data$Gender == "Male", 1,ifelse(data$Gender == "Female", 0, NA))
+data$School_Type_Num <- ifelse(data$School_Type == "Private", 1,ifelse(data$School_Type == "Public", 0, NA))
+```
+
+### Factor Retention
+
+The numeric encoded columns are used for modelling and calculations, but the original categorical variables are retained as factors for grouped summaries, visualizations, ANOVA, t-tests, and frequency tables.
+
+This keeps the analysis interpretable. Statistical models receive numeric inputs, while descriptive and inferential sections can still display readable category names such as `Yes/No`, `Public/Private`, and `Male/Female`.
+
+```{r factor-retention}
+data$Parental_Involvement <- factor(data$Parental_Involvement,levels = ordinal_levels)
+data$Access_to_Resources <- factor(data$Access_to_Resources,levels = ordinal_levels)
+data$Motivation_Level <- factor(data$Motivation_Level,levels = ordinal_levels)
+data$Teacher_Quality <- factor(data$Teacher_Quality,levels = ordinal_levels)
+data$Family_Income <- factor(data$Family_Income,levels = ordinal_levels)
+data$Peer_Influence <- factor(data$Peer_Influence,levels = peer_levels)
+data$Distance_from_Home <- factor(data$Distance_from_Home,levels = distance_levels)
+data$Parental_Education_Level <- factor(data$Parental_Education_Level,levels = education_levels)
+data$Extracurricular_Activities <- factor(data$Extracurricular_Activities, levels = c("No", "Yes"))
+data$Internet_Access <- factor(data$Internet_Access, levels = c("No", "Yes"))
+data$Learning_Disabilities <- factor(data$Learning_Disabilities, levels = c("No", "Yes"))
+data$Gender <- factor(data$Gender, levels = c("Female", "Male"))
+data$School_Type <- factor(data$School_Type, levels = c("Public", "Private"))
+```
+
+### Encoding Verification
+
+After encoding, the new numeric columns are checked for missing values. Since complete-case analysis has already removed rows with missing categories, any `NA` values appearing at this stage would suggest a failed mapping or an unexpected category.
+
+This final check confirms that the variables are ready for correlation analysis, persistence index construction, and regression.
+
+```{r encoding-verification}
+encoded_vars <- c(
+  "Parental_Involvement_Num",
+  "Access_to_Resources_Num",
+  "Motivation_Level_Num",
+  "Teacher_Quality_Num",
+  "Family_Income_Num",
+  "Peer_Influence_Num",
+  "Distance_from_Home_Num",
+  "Parental_Education_Level_Num",
+  "Extracurricular_Activities_Num",
+  "Internet_Access_Num",
+  "Learning_Disabilities_Num",
+  "Gender_Num",
+  "School_Type_Num"
+)
+
+encoding_check <- data.frame(
+  Variable = encoded_vars,
+  Encoded_Missing = sapply(data[encoded_vars], function(x) sum(is.na(x))),
+  row.names = NULL
+)
+
+knitr::kable(encoding_check, row.names = FALSE,caption = "Encoding Safety Check")
 ```
 
 
@@ -152,7 +291,8 @@ data$Distance_Num             <- as.numeric(data$Distance_from_Home)
 
 ### Score Improvement
 
-We create `Score_Improvement` as the difference between the current exam score and previous scores. A positive value indicates the student improved over time --- a direct signal of persistence.
+We create `Score_Improvement` as the difference between the current exam score and previous scores. A positive value indicates the student improved over time -- a direct signal of persistence.
+Score Improvement captures academic growth over time and serves as a direct indicator of persistence.
 
 ```{r score-improvement}
 data$Score_Improvement <- data$Exam_Score - data$Previous_Scores
@@ -165,16 +305,14 @@ No single variable fully captures "persistence." A student might study many hour
 1. **Z-score standardizing** each persistence component (converting to mean = 0, SD = 1), so variables on different scales become comparable.
 2. **Averaging** the z-scores row-wise to produce a single composite value per student.
 
-The six components are: `Hours_Studied`, `Attendance`, `Motivation_Level`, `Exam_Score`, `Score_Improvement`, and `Extracurricular_Activities`.
+The four components are: `Hours_Studied`, `Attendance`, `Motivation_Level`, `Score_Improvement`.
 
 ```{r persistence-index}
 persistence_matrix <- cbind(
   scale(data$Hours_Studied),
   scale(data$Attendance),
-  scale(data$Motivation_Num),
-  scale(data$Exam_Score),
-  scale(data$Score_Improvement),
-  scale(data$Extracurricular_Num)
+  scale(data$Motivation_Level_Num),
+  scale(data$Score_Improvement)
 )
 data$Persistence_Index <- rowMeans(persistence_matrix)
 ```
@@ -191,16 +329,14 @@ summary(data$Persistence_Index)
 ---
 
 
-# Descriptive Analytics (LO1, LO4)
+# Descriptive Analytics
 
 The purpose of descriptive analytics is to understand the structure and distribution of our variables before conducting formal tests. We examine central tendency, spread, frequency distributions, and visual patterns.
 
 ## Numeric Variable Summaries
 
 ```{r numeric-summary}
-numeric_vars <- c("Hours_Studied", "Attendance", "Tutoring_Sessions",
-                   "Exam_Score", "Previous_Scores", "Score_Improvement",
-                   "Persistence_Index")
+numeric_vars <- c("Hours_Studied", "Attendance", "Tutoring_Sessions","Exam_Score", "Previous_Scores", "Score_Improvement", "Persistence_Index")
 
 stats_df <- data.frame(
   Variable = numeric_vars,
@@ -211,8 +347,7 @@ stats_df <- data.frame(
   Max    = sapply(data[numeric_vars], max),
   IQR    = sapply(data[numeric_vars], IQR)
 )
-knitr::kable(stats_df, digits = 2, row.names = FALSE,
-             caption = "Summary Statistics for Numeric Variables")
+knitr::kable(stats_df, digits = 2, row.names = FALSE, caption = "Summary Statistics for Numeric Variables")
 ```
 
 **Observation:** Examine whether the means and medians are close (suggesting symmetry) or diverge (suggesting skewness). The standard deviation indicates how spread out the values are --- larger SD means more variability among students.
@@ -228,8 +363,7 @@ cat_vars <- c("Parental_Involvement", "Access_to_Resources", "Teacher_Quality",
 for (var in cat_vars) {
   tbl <- table(data[[var]])
   pct <- prop.table(tbl) * 100
-  freq_df <- data.frame(Level = names(tbl), Count = as.numeric(tbl),
-                        Percent = round(as.numeric(pct), 1))
+  freq_df <- data.frame(Level = names(tbl), Count = as.numeric(tbl), Percent = round(as.numeric(pct), 1))
   cat(sprintf("\n**%s:**\n\n", var))
   print(knitr::kable(freq_df, row.names = FALSE))
   cat("\n")
@@ -244,8 +378,7 @@ for (var in cat_vars) {
 This is the first direct look at our analytical statement. If supported students show higher persistence, we expect the mean Persistence Index to **increase** as support levels go from Low to High.
 
 ```{r persistence-by-support}
-support_vars <- c("Parental_Involvement", "Access_to_Resources",
-                   "Teacher_Quality", "Peer_Influence", "School_Type")
+support_vars <- c("Parental_Involvement", "Access_to_Resources","Tutoring_Sessions", "Teacher_Quality", "Peer_Influence")
 
 for (var in support_vars) {
   group_stats <- data %>%
@@ -269,8 +402,8 @@ for (var in support_vars) {
 Histograms reveal the shape of each variable's distribution --- whether it is symmetric, skewed, or multimodal.
 
 ```{r histograms, fig.height=5}
-hist_vars <- c("Hours_Studied", "Attendance", "Exam_Score",
-               "Score_Improvement", "Persistence_Index")
+# Numeric variables (histograms)
+hist_vars <- c("Hours_Studied", "Attendance","Score_Improvement", "Persistence_Index")
 
 for (var in hist_vars) {
   p <- ggplot(data, aes(x = .data[[var]])) +
@@ -279,6 +412,12 @@ for (var in hist_vars) {
     theme_minimal()
   print(p)
 }
+
+# Motivation level (categorical)
+ggplot(data, aes(x = Motivation_Level)) +
+  geom_bar(fill = "steelblue", alpha = 0.8) +
+  labs(title = "Distribution of Motivation Level", x = "Motivation Level", y = "Count") +
+  theme_minimal()
 ```
 
 
@@ -302,7 +441,8 @@ for (var in cat_vars) {
 Box plots are the key visualization for our analytical statement. They show whether the distribution of Persistence Index shifts upward as support increases.
 
 ```{r boxplots, fig.height=5}
-for (var in support_vars) {
+support_varss <- c("Parental_Involvement", "Access_to_Resources", "Teacher_Quality", "Peer_Influence")
+for (var in support_varss) {
   p <- ggplot(data, aes(x = .data[[var]], y = Persistence_Index, fill = .data[[var]])) +
     geom_boxplot(alpha = 0.7, outlier.alpha = 0.3) +
     labs(title = paste("Persistence Index by", var),
@@ -317,15 +457,25 @@ for (var in support_vars) {
 **Observation:** Look for whether the median line (thick horizontal line inside each box) rises from left to right. A clear upward trend would visually support the statement that higher support is associated with higher persistence.
 
 
-### Correlation Analysis
+### Correlation Analysis for Variable Screening
 
-A correlation heatmap shows the strength and direction of linear relationships between all numeric variables simultaneously. Values close to +1 or -1 indicate strong relationships; values near 0 indicate weak or no linear relationship.
+Correlation analysis is used here for variable screening before regression. It serves two purposes: to examine how strongly each candidate support variable is related to `Persistence_Index`, and to check whether candidate predictors are too strongly correlated with each other.
 
 ```{r correlation-heatmap, fig.width=10, fig.height=8}
-cor_vars <- c("Hours_Studied", "Attendance", "Tutoring_Sessions",
-              "Exam_Score", "Score_Improvement", "Persistence_Index",
-              "Parental_Involvement_Num", "Access_to_Resources_Num",
-              "Teacher_Quality_Num", "Peer_Influence_Num")
+cor_vars <- c(
+  "Persistence_Index",
+  "Parental_Involvement_Num",
+  "Access_to_Resources_Num",
+  "Motivation_Level_Num",
+  "Teacher_Quality_Num",
+  "Peer_Influence_Num",
+  "Tutoring_Sessions",
+  "Score_Improvement",
+  "Family_Income_Num",
+  "Distance_from_Home_Num",
+  "Parental_Education_Level_Num"
+)
+
 cor_matrix <- cor(data[, cor_vars], use = "complete.obs")
 
 corrplot(cor_matrix, method = "color", type = "upper",
@@ -333,7 +483,23 @@ corrplot(cor_matrix, method = "color", type = "upper",
          addCoef.col = "black", number.cex = 0.7)
 ```
 
-**Key interest:** The correlations between support variables (bottom rows) and persistence components / Persistence Index (top rows). Positive correlations between support and persistence variables would support our analytical statement.
+```{r correlation-screen-table}
+cor_with_persistence <- cor_matrix["Persistence_Index", -1]
+
+cor_screen_df <- data.frame(
+  Variable = names(cor_with_persistence),
+  Correlation_With_Persistence = round(as.numeric(cor_with_persistence), 4)
+)
+
+cor_screen_df <- cor_screen_df[order(-abs(cor_screen_df$Correlation_With_Persistence)), ]
+
+knitr::kable(cor_screen_df, row.names = FALSE,
+             caption = "Correlation of Candidate Predictors with Persistence Index")
+```
+
+Variables with stronger correlations with `Persistence_Index` are considered stronger candidates for regression, while variables with negligible correlations are treated as weaker candidates. High correlation among predictors themselves may indicate multicollinearity, which will be checked again using VIF in the regression diagnostics.
+
+Based on theoretical relevance and the observed correlation patterns, the retained candidate predictors for regression are parental involvement, access to resources, motivation level, teacher quality, peer influence, and tutoring sessions.
 
 
 ### Scatter Plot: Tutoring Sessions vs Persistence
@@ -350,7 +516,7 @@ ggplot(data, aes(x = Tutoring_Sessions, y = Persistence_Index)) +
 ```
 
 
-## Probability Distribution Fitting (LO1, LO4)
+## Probability Distribution Fitting
 
 A core requirement of this module is demonstrating knowledge of probability distributions from the exponential family. We fit four distributions to appropriate variables and assess goodness-of-fit.
 
@@ -510,7 +676,7 @@ ggplot(obs_df) +
 The **Bernoulli distribution** is the simplest discrete distribution, modelling a single binary outcome (success/failure) with parameter p (probability of success). We fit it to `Extracurricular_Activities` (Yes = 1, No = 0).
 
 ```{r fit-bernoulli}
-p_hat <- mean(data$Extracurricular_Num)
+p_hat <- mean(data$Extracurricular_Activities_Num)
 ```
 
 Estimated p = `r round(p_hat, 4)`. This means approximately `r round(p_hat * 100, 1)`% of students participate in extracurricular activities.
@@ -518,7 +684,7 @@ Estimated p = `r round(p_hat, 4)`. This means approximately `r round(p_hat * 100
 ```{r plot-bernoulli, fig.height=5}
 binom_df <- data.frame(
   Category = factor(c("No", "Yes"), levels = c("No", "Yes")),
-  Observed = c(mean(data$Extracurricular_Num == 0), p_hat),
+  Observed = c(mean(data$Extracurricular_Activities_Num == 0), p_hat),
   Expected = c(1 - p_hat, p_hat)
 )
 binom_long <- pivot_longer(binom_df, cols = c(Observed, Expected),
@@ -538,7 +704,7 @@ ggplot(binom_long, aes(x = Category, y = Proportion, fill = Type)) +
 ---
 
 
-# Inferential Analytics (LO2)
+# Inferential Analytics
 
 Descriptive analysis showed patterns, but patterns alone could be due to random variation. Inferential analytics uses hypothesis testing to determine whether the observed differences are **statistically significant** --- unlikely to have occurred by chance alone.
 
@@ -757,12 +923,12 @@ cor_result
 ---
 
 
-# Predictive Analytics (LO3, LO6)
+# Predictive Analytics
 
 Having established which support variables are descriptively and inferentially associated with persistence, we now build predictive models. These models go beyond testing *whether* a relationship exists --- they quantify *how much* each support variable contributes and *how well* we can predict persistence from support factors.
 
 
-## Multiple Linear Regression (LO3)
+## Multiple Linear Regression
 
 **Purpose:** Model the Persistence Index as a linear function of all support variables and control variables. This allows us to quantify the independent contribution of each predictor while controlling for confounders.
 
@@ -777,7 +943,9 @@ $$\text{Persistence Index} = \beta_0 + \beta_1 \cdot \text{Parental Involvement}
 4. **Homoscedasticity:** The variance of residuals is constant across fitted values.
 5. **No multicollinearity:** Predictors are not highly correlated with each other.
 
-We use numeric-encoded versions of ordinal variables so coefficients represent the effect of a one-level increase (e.g., Low → Medium or Medium → High).
+We use numerically encoded categorical predictors so the regression model can estimate how support and control variables relate to the continuous Persistence Index.
+
+The regression model was built using predictors that were first selected conceptually as student support-related factors, then screened using their correlation with the persistence index. Final model refinement was performed during regression analysis.
 
 
 ### Full Model
@@ -786,9 +954,9 @@ We use numeric-encoded versions of ordinal variables so coefficients represent t
 model_data <- data[, c("Persistence_Index",
                         "Parental_Involvement_Num", "Access_to_Resources_Num",
                         "Tutoring_Sessions", "Teacher_Quality_Num",
-                        "Peer_Influence_Num", "School_Type",
-                        "Family_Income_Num", "Parental_Education_Num",
-                        "Gender", "Distance_Num")]
+                        "Peer_Influence_Num", "School_Type_Num",
+                        "Family_Income_Num", "Parental_Education_Level_Num",
+                        "Gender_Num", "Distance_from_Home_Num")]
 
 full_model <- lm(Persistence_Index ~ ., data = model_data)
 summary(full_model)
@@ -877,7 +1045,7 @@ Using the standard threshold of 4/n = `r round(threshold, 6)`, there are **`r le
 ---
 
 
-## Naive Bayes Classification (LO6)
+## Naive Bayes Classification
 
 **Purpose:** While regression predicts a continuous Persistence Index, classification answers a different question: **can we categorize students into Low, Medium, or High persistence groups based on their support variables?** This demonstrates Bayesian methods (LO6).
 

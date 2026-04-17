@@ -29,38 +29,211 @@ cat("Dataset Dimensions:", nrow(data), "rows x", ncol(data), "columns\n")
 str(data)
 
 cat("\n--- Missing Values ---\n")
-print(colSums(is.na(data)))
+missing_summary <- data.frame(
+  Variable = names(data),
+  NA_Count = sapply(data, function(x) sum(is.na(x))),
+  Blank_Count = sapply(data, function(x) {
+    if (is.character(x)) sum(!is.na(x) & trimws(x) == "") else 0
+  }),
+  row.names = NULL
+)
+missing_summary$Total_Missing <- missing_summary$NA_Count + missing_summary$Blank_Count
+print(missing_summary)
 
-# Ordered factor encoding
+data <- data %>%
+  mutate(across(where(is.character), ~ na_if(trimws(.x), "")))
+
+rows_before_complete_case <- nrow(data)
+data <- data %>% drop_na()
+rows_after_complete_case <- nrow(data)
+rows_removed_complete_case <- rows_before_complete_case - rows_after_complete_case
+
+cat("\n--- Complete-Case Analysis ---\n")
+cat("Rows before:", rows_before_complete_case, "\n")
+cat("Rows after:", rows_after_complete_case, "\n")
+cat("Rows removed:", rows_removed_complete_case, "\n")
+
+cat("\n--- Variable Encoding Plan ---\n")
+encoding_plan <- data.frame(
+  Variable = c(
+    "Parental_Involvement", "Access_to_Resources", "Motivation_Level",
+    "Teacher_Quality", "Family_Income", "Peer_Influence",
+    "Distance_from_Home", "Parental_Education_Level",
+    "Extracurricular_Activities", "Internet_Access", "Learning_Disabilities",
+    "Gender", "School_Type"
+  ),
+  Type = rep("Categorical", 13),
+  Nature = c(
+    rep("Ordinal", 8),
+    rep("Binary", 3),
+    "Nominal (Binary)", "Nominal (Binary)"
+  ),
+  Encoding_Technique = c(
+    rep("Label Encoding (1,2,3)", 8),
+    rep("Binary Encoding (0/1)", 5)
+  ),
+  Reason = c(
+    "Has order (Low < Medium < High)", "Ordered levels", "Ordered",
+    "Ordered", "Ordered", "Negative < Neutral < Positive",
+    "Near < Moderate < Far", "Education hierarchy", "Yes/No", "Yes/No",
+    "Yes/No", "No ranking", "No ranking"
+  )
+)
+print(encoding_plan)
+cat("\nNo variables require full one-hot encoding.\n")
+cat("Ordinal variables use 1,2,3 and binary variables use 0/1.\n")
+cat("One-hot encoding is mainly needed for variables with 3+ categories and no order.\n")
+
+# -------------------------
+# Data Validation
+# -------------------------
+#
+# Before encoding categorical variables, the observed category labels are
+# checked against the expected labels. This is statistically important because
+# numeric encoding assumes that each label has a fixed meaning. For example,
+# if "Medium" were misspelled as "Med", converting directly to a factor could
+# silently produce NA values and distort the model inputs.
+#
+# This validation step protects the analysis from accidental misclassification
+# before any ordinal or binary mapping is applied.
+
 ordinal_levels <- c("Low", "Medium", "High")
-data$Parental_Involvement     <- factor(data$Parental_Involvement, levels = ordinal_levels, ordered = TRUE)
-data$Access_to_Resources      <- factor(data$Access_to_Resources,  levels = ordinal_levels, ordered = TRUE)
-data$Teacher_Quality           <- factor(data$Teacher_Quality,       levels = ordinal_levels, ordered = TRUE)
-data$Motivation_Level          <- factor(data$Motivation_Level,      levels = ordinal_levels, ordered = TRUE)
-data$Family_Income             <- factor(data$Family_Income,         levels = ordinal_levels, ordered = TRUE)
-data$Peer_Influence            <- factor(data$Peer_Influence,
-                                         levels = c("Negative", "Neutral", "Positive"), ordered = TRUE)
-data$Parental_Education_Level  <- factor(data$Parental_Education_Level,
-                                         levels = c("High School", "College", "Postgraduate"), ordered = TRUE)
-data$Distance_from_Home        <- factor(data$Distance_from_Home,
-                                         levels = c("Near", "Moderate", "Far"), ordered = TRUE)
+peer_levels <- c("Negative", "Neutral", "Positive")
+distance_levels <- c("Near", "Moderate", "Far")
+education_levels <- c("High School", "College", "Postgraduate")
 
-data$School_Type                <- factor(data$School_Type)
-data$Gender                     <- factor(data$Gender)
-data$Extracurricular_Activities <- factor(data$Extracurricular_Activities)
-data$Internet_Access            <- factor(data$Internet_Access)
-data$Learning_Disabilities      <- factor(data$Learning_Disabilities)
+validate_levels <- function(variable, allowed_levels) {
+  actual_levels <- unique(data[[variable]][!is.na(data[[variable]])])
+  invalid_levels <- setdiff(actual_levels, allowed_levels)
 
-# Numeric encoding for composite index, correlation, and regression
-data$Motivation_Num           <- as.numeric(data$Motivation_Level)
-data$Extracurricular_Num      <- ifelse(data$Extracurricular_Activities == "Yes", 1, 0)
+  if (length(invalid_levels) > 0) {
+    stop(paste(
+      "Unexpected value(s) in", variable, ":",
+      paste(invalid_levels, collapse = ", ")
+    ))
+  }
+}
+
+validate_levels("Parental_Involvement", ordinal_levels)
+validate_levels("Access_to_Resources", ordinal_levels)
+validate_levels("Motivation_Level", ordinal_levels)
+validate_levels("Teacher_Quality", ordinal_levels)
+validate_levels("Family_Income", ordinal_levels)
+validate_levels("Peer_Influence", peer_levels)
+validate_levels("Distance_from_Home", distance_levels)
+validate_levels("Parental_Education_Level", education_levels)
+validate_levels("Extracurricular_Activities", c("No", "Yes"))
+validate_levels("Internet_Access", c("No", "Yes"))
+validate_levels("Learning_Disabilities", c("No", "Yes"))
+validate_levels("Gender", c("Female", "Male"))
+validate_levels("School_Type", c("Public", "Private"))
+
+
+# -------------------------
+# Ordinal Encoding
+# -------------------------
+#
+# Ordinal variables have categories with a meaningful ranking. Therefore, they
+# are first converted into ordered factors so R stores the correct order of the
+# categories. They are then converted to numeric values using that order.
+#
+# This preserves the statistical meaning of progression from lower to higher
+# levels, such as Low < Medium < High. The resulting 1, 2, 3 coding allows
+# correlation and regression models to estimate the effect of a one-level
+# increase while retaining the natural ranking of the variable.
+
+data$Parental_Involvement <- factor(data$Parental_Involvement,
+                                    levels = ordinal_levels, ordered = TRUE)
+data$Access_to_Resources <- factor(data$Access_to_Resources,
+                                   levels = ordinal_levels, ordered = TRUE)
+data$Motivation_Level <- factor(data$Motivation_Level,
+                                levels = ordinal_levels, ordered = TRUE)
+data$Teacher_Quality <- factor(data$Teacher_Quality,
+                               levels = ordinal_levels, ordered = TRUE)
+data$Family_Income <- factor(data$Family_Income,
+                             levels = ordinal_levels, ordered = TRUE)
+data$Peer_Influence <- factor(data$Peer_Influence,
+                              levels = peer_levels, ordered = TRUE)
+data$Distance_from_Home <- factor(data$Distance_from_Home,
+                                  levels = distance_levels, ordered = TRUE)
+data$Parental_Education_Level <- factor(data$Parental_Education_Level,
+                                        levels = education_levels, ordered = TRUE)
+
 data$Parental_Involvement_Num <- as.numeric(data$Parental_Involvement)
-data$Access_to_Resources_Num  <- as.numeric(data$Access_to_Resources)
-data$Teacher_Quality_Num      <- as.numeric(data$Teacher_Quality)
-data$Peer_Influence_Num       <- as.numeric(data$Peer_Influence)
-data$Family_Income_Num        <- as.numeric(data$Family_Income)
-data$Parental_Education_Num   <- as.numeric(data$Parental_Education_Level)
-data$Distance_Num             <- as.numeric(data$Distance_from_Home)
+data$Access_to_Resources_Num <- as.numeric(data$Access_to_Resources)
+data$Motivation_Level_Num <- as.numeric(data$Motivation_Level)
+data$Teacher_Quality_Num <- as.numeric(data$Teacher_Quality)
+data$Family_Income_Num <- as.numeric(data$Family_Income)
+data$Peer_Influence_Num <- as.numeric(data$Peer_Influence)
+data$Distance_from_Home_Num <- as.numeric(data$Distance_from_Home)
+data$Parental_Education_Level_Num <- as.numeric(data$Parental_Education_Level)
+
+
+# -------------------------
+# Binary Encoding
+# -------------------------
+#
+# Binary variables contain only two categories, so a single 0/1 numeric column
+# is sufficient for statistical modelling. This avoids unnecessary one-hot
+# encoding. If both categories of a binary variable were expanded into separate
+# dummy columns while using an intercept in regression, the model could suffer
+# from perfect multicollinearity, commonly called the dummy variable trap.
+#
+# Using one 0/1 indicator keeps the coding simple, interpretable, and suitable
+# for regression: the coefficient compares the category coded as 1 against the
+# reference category coded as 0.
+
+data$Extracurricular_Activities_Num <- ifelse(data$Extracurricular_Activities == "Yes", 1,
+                                              ifelse(data$Extracurricular_Activities == "No", 0, NA))
+data$Internet_Access_Num <- ifelse(data$Internet_Access == "Yes", 1,
+                                   ifelse(data$Internet_Access == "No", 0, NA))
+data$Learning_Disabilities_Num <- ifelse(data$Learning_Disabilities == "Yes", 1,
+                                         ifelse(data$Learning_Disabilities == "No", 0, NA))
+data$Gender_Num <- ifelse(data$Gender == "Male", 1,
+                          ifelse(data$Gender == "Female", 0, NA))
+data$School_Type_Num <- ifelse(data$School_Type == "Private", 1,
+                               ifelse(data$School_Type == "Public", 0, NA))
+
+
+# -------------------------
+# Factor Retention
+# -------------------------
+#
+# The numeric encoded columns are used for modelling and calculations, but the
+# original categorical variables are retained as factors for grouped summaries,
+# visualizations, ANOVA, t-tests, and frequency tables.
+#
+# This keeps the analysis interpretable: statistical models receive numeric
+# inputs, while descriptive and inferential sections can still display readable
+# category names such as Yes/No, Public/Private, and Male/Female.
+
+data$Extracurricular_Activities <- factor(data$Extracurricular_Activities, levels = c("No", "Yes"))
+data$Internet_Access <- factor(data$Internet_Access, levels = c("No", "Yes"))
+data$Learning_Disabilities <- factor(data$Learning_Disabilities, levels = c("No", "Yes"))
+data$Gender <- factor(data$Gender, levels = c("Female", "Male"))
+data$School_Type <- factor(data$School_Type, levels = c("Public", "Private"))
+
+
+# -------------------------
+# Encoding Verification
+# -------------------------
+#
+# After encoding, the new numeric columns are checked for missing values.
+# Since complete-case analysis has already removed rows with missing categories,
+# any NA values appearing at this stage would suggest a failed mapping or an
+# unexpected category. This final check confirms that the variables are ready
+# for correlation analysis, persistence index construction, and regression.
+
+encoded_vars <- c(
+  "Parental_Involvement_Num", "Access_to_Resources_Num", "Motivation_Level_Num",
+  "Teacher_Quality_Num", "Family_Income_Num", "Peer_Influence_Num",
+  "Distance_from_Home_Num", "Parental_Education_Level_Num",
+  "Extracurricular_Activities_Num", "Internet_Access_Num",
+  "Learning_Disabilities_Num", "Gender_Num", "School_Type_Num"
+)
+
+cat("\n--- Encoding Safety Check ---\n")
+print(sapply(data[encoded_vars], function(x) sum(is.na(x))))
 
 # Derived variable
 data$Score_Improvement <- data$Exam_Score - data$Previous_Scores
@@ -69,10 +242,10 @@ data$Score_Improvement <- data$Exam_Score - data$Previous_Scores
 persistence_matrix <- cbind(
   scale(data$Hours_Studied),
   scale(data$Attendance),
-  scale(data$Motivation_Num),
+  scale(data$Motivation_Level_Num),
   scale(data$Exam_Score),
   scale(data$Score_Improvement),
-  scale(data$Extracurricular_Num)
+  scale(data$Extracurricular_Activities_Num)
 )
 data$Persistence_Index <- rowMeans(persistence_matrix)
 
@@ -315,16 +488,16 @@ ggsave("plots/fit_poisson_tutoring.png", p, width = 8, height = 6, dpi = 300)
 
 # ---- Bernoulli Distribution: Extracurricular Activities ----
 cat("\n--- Bernoulli Distribution: Extracurricular Activities ---\n")
-p_hat <- mean(data$Extracurricular_Num)
+p_hat <- mean(data$Extracurricular_Activities_Num)
 cat(sprintf("  Estimated p (participation probability): %.4f\n", p_hat))
 cat(sprintf("  Observed: No = %d (%.1f%%) | Yes = %d (%.1f%%)\n",
-            sum(data$Extracurricular_Num == 0), (1 - p_hat) * 100,
-            sum(data$Extracurricular_Num == 1), p_hat * 100))
+            sum(data$Extracurricular_Activities_Num == 0), (1 - p_hat) * 100,
+            sum(data$Extracurricular_Activities_Num == 1), p_hat * 100))
 # MLE of Bernoulli is the sample proportion, so observed = expected by definition.
 
 binom_df <- data.frame(
   Category = factor(c("No", "Yes"), levels = c("No", "Yes")),
-  Observed = c(mean(data$Extracurricular_Num == 0), p_hat),
+  Observed = c(mean(data$Extracurricular_Activities_Num == 0), p_hat),
   Expected = c(1 - p_hat, p_hat)
 )
 binom_long <- pivot_longer(binom_df, cols = c(Observed, Expected),
@@ -440,9 +613,9 @@ cat("\n\n============ MULTIPLE LINEAR REGRESSION ============\n")
 model_data <- data[, c("Persistence_Index",
                         "Parental_Involvement_Num", "Access_to_Resources_Num",
                         "Tutoring_Sessions", "Teacher_Quality_Num",
-                        "Peer_Influence_Num", "School_Type",
-                        "Family_Income_Num", "Parental_Education_Num",
-                        "Gender", "Distance_Num")]
+                        "Peer_Influence_Num", "School_Type_Num",
+                        "Family_Income_Num", "Parental_Education_Level_Num",
+                        "Gender_Num", "Distance_from_Home_Num")]
 
 full_model <- lm(Persistence_Index ~ ., data = model_data)
 cat("\n--- Full Model Summary ---\n")
