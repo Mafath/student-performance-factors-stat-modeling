@@ -235,6 +235,14 @@ encoded_vars <- c(
 cat("\n--- Encoding Safety Check ---\n")
 print(sapply(data[encoded_vars], function(x) sum(is.na(x))))
 
+numeric_vars_current <- names(data)[sapply(data, is.numeric)]
+model_input_cols <- unique(c(numeric_vars_current, encoded_vars))
+encoded_numeric_df <- data[, model_input_cols]
+
+cat("\n--- Modelling DataFrame ---\n")
+cat("encoded_numeric_df columns:", ncol(encoded_numeric_df), "\n")
+cat("encoded_numeric_df rows:", nrow(encoded_numeric_df), "\n")
+
 # Derived variable
 data$Score_Improvement <- data$Exam_Score - data$Previous_Scores
 
