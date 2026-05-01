@@ -1,4 +1,4 @@
-# Student Persistence Statistical Analysis (R)
+<h1 align="center">🌟Student Persistence Statistical Analysis (R)</h1>
 
 An end-to-end statistical modeling project investigating the statement:
 
