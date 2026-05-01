@@ -29,8 +29,6 @@ This report investigates whether various forms of support -- parental involvemen
 
 We use the **Student Performance Factors** dataset, which contains **6,607 observations** across **20 variables** capturing academic, social, and demographic attributes of students. This is **secondary data** sourced from Kaggle:
 
-- **Source:** [Student Performance Factors – Kaggle](https://www.kaggle.com/datasets/lainguyn123/student-performance-factors)
-- **Author:** Lai Nguyen
 
 ## Variable Structure
 

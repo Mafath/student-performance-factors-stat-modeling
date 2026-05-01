@@ -23,7 +23,7 @@ dir.create("plots", showWarnings = FALSE)
 # PHASE 1: DATA LOADING AND PREPARATION
 # ============================================================
 
-data <- read.csv("Student Performance Factors 1.csv", stringsAsFactors = FALSE)
+data <- read.csv("Student Performance Factors.csv", stringsAsFactors = FALSE)
 
 cat("Dataset Dimensions:", nrow(data), "rows x", ncol(data), "columns\n")
 str(data)
